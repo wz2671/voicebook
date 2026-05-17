@@ -36,19 +36,58 @@ class DoubaoTTS:
     POLL_INTERVAL = 2
     POLL_TIMEOUT = 600
 
-    # 预设常用中文音色
-    CHINESE_VOICES = [
-        {"voice_id": "zh_female_vv_uranus_bigtts", "name": "女声-标准(推荐)", "gender": "Female", "description": "通用标准女声，清晰自然"},
-        {"voice_id": "zh_male_ao_li_bigtts", "name": "男声-标准", "gender": "Male", "description": "通用标准男声"},
-        {"voice_id": "zh_female_ao_guai_bigtts", "name": "女声-活泼", "gender": "Female", "description": "年轻活泼女声"},
-        {"voice_id": "zh_male_vv_robust_bigtts", "name": "男声-沉稳", "gender": "Male", "description": "沉稳大气男声"},
-        {"voice_id": "zh_female_vv_snow_bigtts", "name": "女声-温柔", "gender": "Female", "description": "温柔亲切女声"},
-        {"voice_id": "zh_male_ao_guang_bigtts", "name": "男声-年轻", "gender": "Male", "description": "年轻阳光男声"},
-        {"voice_id": "zh_female_shuoru_bigtts", "name": "女声-知性", "gender": "Female", "description": "知性优雅女声"},
-        {"voice_id": "zh_male_wennuan_bigtts", "name": "男声-温暖", "gender": "Male", "description": "温暖亲切男声"},
-        {"voice_id": "BV001_streaming", "name": "女声-新闻播报", "gender": "Female", "description": "专业新闻播报女声"},
-        {"voice_id": "BV002_streaming", "name": "男声-新闻播报", "gender": "Male", "description": "专业新闻播报男声"},
+    # seed-tts-2.0 中文音色（uranus/jupiter_bigtts 系列）
+    CHINESE_VOICES_2_0 = [
+        {"voice_id": "zh_female_vv_uranus_bigtts", "name": "女声-vv(推荐)", "gender": "Female",
+         "description": "活泼灵动女声，有很强分享欲", "resource_id": "seed-tts-2.0"},
+        {"voice_id": "zh_female_xiaohe_jupiter_bigtts", "name": "女声-小荷", "gender": "Female",
+         "description": "甜美活泼女声，明显台湾口音", "resource_id": "seed-tts-2.0"},
+        {"voice_id": "zh_male_yunzhou_jupiter_bigtts", "name": "男声-云舟", "gender": "Male",
+         "description": "清爽沉稳男声", "resource_id": "seed-tts-2.0"},
+        {"voice_id": "zh_male_xiaotian_jupiter_bigtts", "name": "男声-小天", "gender": "Male",
+         "description": "清爽磁性男声", "resource_id": "seed-tts-2.0"},
+        {"voice_id": "zh_female_xueayi_saturn_bigtts", "name": "女声-儿童绘本", "gender": "Female",
+         "description": "儿童绘本阅读，温暖亲切", "resource_id": "seed-tts-2.0"},
     ]
+
+    # seed-tts-2.0 英文音色（uranus_bigtts 系列）
+    ENGLISH_VOICES_2_0 = [
+        {"voice_id": "en_male_tim_uranus_bigtts", "name": "Tim", "gender": "Male",
+         "description": "美式英语男声", "resource_id": "seed-tts-2.0"},
+        {"voice_id": "en_female_dacey_uranus_bigtts", "name": "Dacey", "gender": "Female",
+         "description": "美式英语女声", "resource_id": "seed-tts-2.0"},
+        {"voice_id": "en_female_stokie_uranus_bigtts", "name": "Stokie", "gender": "Female",
+         "description": "美式英语女声", "resource_id": "seed-tts-2.0"},
+    ]
+
+    # seed-tts-1.0 音色（mars/moon/wvae_bigtts / ICL 系列）
+    CHINESE_VOICES_1_0 = [
+        {"voice_id": "zh_female_vv_mars_bigtts", "name": "女声-vivi 1.0", "gender": "Female",
+         "description": "活泼可爱女声，支持多情感", "resource_id": "seed-tts-1.0"},
+        {"voice_id": "zh_male_ahu_conversation_wvae_bigtts", "name": "男声-阿虎", "gender": "Male",
+         "description": "通用男声", "resource_id": "seed-tts-1.0"},
+        {"voice_id": "ICL_zh_female_chengshu_v1_tob", "name": "女声-成熟温柔", "gender": "Female",
+         "description": "成熟温柔女声(复刻)", "resource_id": "seed-icl-1.0"},
+        {"voice_id": "ICL_zh_female_tianmei_v1_tob", "name": "女声-甜美活泼", "gender": "Female",
+         "description": "甜美活泼女声(复刻)", "resource_id": "seed-icl-1.0"},
+    ]
+
+    # 合并所有预设音色（用于 voices 命令展示）
+    CHINESE_VOICES = CHINESE_VOICES_2_0 + CHINESE_VOICES_1_0
+
+    # speaker 后缀/前缀 → resource_id 映射
+    _SPEAKER_RESOURCE_MAP_SUFFIX = {
+        "_jupiter_bigtts": "seed-tts-2.0",
+        "_uranus_bigtts": "seed-tts-2.0",
+        "_saturn_bigtts": "seed-tts-2.0",
+        "_moon_bigtts": "seed-tts-1.0",
+        "_mars_bigtts": "seed-tts-1.0",
+        "_wvae_bigtts": "seed-tts-1.0",
+    }
+    _SPEAKER_RESOURCE_MAP_PREFIX = {
+        "ICL_": "seed-icl-1.0",
+        "S_": "seed-icl-2.0",
+    }
 
     def __init__(
         self,
@@ -75,8 +114,25 @@ class DoubaoTTS:
         if not self.access_key:
             raise ValueError("豆包 Access Key 未设置，请在 .env.local 中设置 DOUBAO_ACCESS_KEY")
 
-        self.resource_id = resource_id or _env_config.doubao_resource_id
         self.speaker = speaker or _env_config.doubao_speaker
+        # 根据 speaker 后缀/前缀自动推断 resource_id，避免 55000000 不匹配错误
+        # 后缀: _jupiter_bigtts/_uranus_bigtts/_saturn_bigtts → seed-tts-2.0
+        #       _moon_bigtts/_mars_bigtts/_wvae_bigtts → seed-tts-1.0
+        # 前缀: ICL_ → seed-icl-1.0, S_ → seed-icl-2.0
+        inferred_resource_id = None
+        for suffix, rid in self._SPEAKER_RESOURCE_MAP_SUFFIX.items():
+            if self.speaker.endswith(suffix):
+                inferred_resource_id = rid
+                break
+        if inferred_resource_id is None:
+            for prefix, rid in self._SPEAKER_RESOURCE_MAP_PREFIX.items():
+                if self.speaker.startswith(prefix):
+                    inferred_resource_id = rid
+                    break
+        if inferred_resource_id and not resource_id:
+            self.resource_id = inferred_resource_id
+        else:
+            self.resource_id = resource_id or _env_config.doubao_resource_id
         self.audio_format = audio_format or _env_config.doubao_audio_format
         self.sample_rate = sample_rate if sample_rate is not None else _env_config.doubao_sample_rate
         self.speech_rate = speech_rate if speech_rate is not None else _env_config.doubao_speech_rate
@@ -88,6 +144,7 @@ class DoubaoTTS:
             "X-Api-App-Id": self.app_id,
             "X-Api-Access-Key": self.access_key,
             "X-Api-Resource-Id": self.resource_id,
+            "X-Api-Request-Id": str(uuid.uuid4()),
             "Content-Type": "application/json",
         }
 

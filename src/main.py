@@ -163,17 +163,25 @@ def convert_command(chapter_dir: str, output_dir: str, voice: str, engine: str, 
 
     chapter_path = Path(chapter_dir)
     if not chapter_path.exists():
-        logger.error(f"章节目录不存在: {chapter_dir}")
-        print(f"错误: 章节目录不存在: {chapter_dir}")
+        logger.error(f"路径不存在: {chapter_dir}")
+        print(f"错误: 路径不存在: {chapter_dir}")
         return 1
 
-    chapter_files = sorted(chapter_path.glob("chapter*.md"))
-    if not chapter_files:
-        logger.error(f"没有找到章节文件: {chapter_dir}")
-        print(f"错误: 没有找到章节文件 (chapter*.md)")
-        return 1
-
-    book_name = chapter_path.name
+    # 支持单文件路径或目录路径
+    if chapter_path.is_file():
+        if chapter_path.suffix.lower() != '.md':
+            logger.error(f"不支持的文件格式: {chapter_path.suffix}")
+            print(f"错误: 仅支持 .md 文件，当前: {chapter_path.suffix}")
+            return 1
+        chapter_files = [chapter_path]
+        book_name = chapter_path.parent.name
+    else:
+        chapter_files = sorted(chapter_path.glob("*.md"))
+        if not chapter_files:
+            logger.error(f"没有找到章节文件: {chapter_dir}")
+            print(f"错误: 没有找到章节文件 (*.md)")
+            return 1
+        book_name = chapter_path.name
     output_path = Path(output_dir) / book_name
     output_path.mkdir(parents=True, exist_ok=True)
 
@@ -372,7 +380,7 @@ def main():
                                 help=f'输出目录 (默认: {CHAPTER_DIR})')
 
     convert_parser = subparsers.add_parser('convert', help='将章节转换为音频')
-    convert_parser.add_argument('chapter_dir', help='章节目录路径')
+    convert_parser.add_argument('chapter_dir', help='章节目录或 .md 文件路径')
     convert_parser.add_argument('-o', '--output', default=str(AUDIOS_DIR),
                                 help=f'输出目录 (默认: {AUDIOS_DIR})')
     convert_parser.add_argument('-v', '--voice', default=None,
