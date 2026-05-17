@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(python src/env.py)",
-      "Bash(python test/test_minimax_tts.py)"
+      "Bash(python test/test_minimax_tts.py)",
+      "WebSearch"
     ]
   }
 }
