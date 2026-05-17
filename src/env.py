@@ -91,8 +91,8 @@ class EnvConfig:
 
     @property
     def minimax_model(self) -> str:
-        """Minimax TTS 模型: speech-01 或 speech-02"""
-        return _get("MINIMAX_MODEL", "speech-01")
+        """Minimax TTS 模型: speech-2.8-hd / speech-02-hd / speech-2.6-hd / speech-01 / speech-02"""
+        return _get("MINIMAX_MODEL", "speech-2.8-hd")
 
     @property
     def minimax_voice_id(self) -> str:
@@ -143,6 +143,64 @@ class EnvConfig:
     def minimax_audio_format(self) -> str:
         """输出音频格式 (mp3, wav, pcm, flac)"""
         return _get("MINIMAX_AUDIO_FORMAT", "mp3")
+
+    # ============================================================
+    # 豆包（火山引擎）TTS API 配置
+    # ============================================================
+
+    @property
+    def doubao_app_id(self) -> str:
+        """火山引擎 APP ID，用于鉴权"""
+        return _get("DOUBAO_APP_ID", "")
+
+    @property
+    def doubao_access_key(self) -> str:
+        """火山引擎 Access Token，用于鉴权"""
+        return _get("DOUBAO_ACCESS_KEY", "")
+
+    @property
+    def doubao_resource_id(self) -> str:
+        """资源 ID: seed-tts-2.0 (模型2.0) / seed-tts-1.0 (模型1.0) / seed-icl-2.0 (声音复刻)"""
+        return _get("DOUBAO_RESOURCE_ID", "seed-tts-2.0")
+
+    @property
+    def doubao_speaker(self) -> str:
+        """默认发音人，见 https://www.volcengine.com/docs/6561/1257544"""
+        return _get("DOUBAO_SPEAKER", "zh_female_vv_uranus_bigtts")
+
+    @property
+    def doubao_audio_format(self) -> str:
+        """输出音频格式 (mp3, ogg_opus, pcm, wav)"""
+        return _get("DOUBAO_AUDIO_FORMAT", "mp3")
+
+    @property
+    def doubao_sample_rate(self) -> int:
+        """采样率 (8000, 16000, 22050, 24000, 32000, 44100, 48000)"""
+        try:
+            return int(_get("DOUBAO_SAMPLE_RATE", "24000"))
+        except ValueError:
+            return 24000
+
+    @property
+    def doubao_speech_rate(self) -> int:
+        """语速 [-50, 100]，100=2.0倍速，-50=0.5倍速"""
+        try:
+            return int(_get("DOUBAO_SPEECH_RATE", "0"))
+        except ValueError:
+            return 0
+
+    @property
+    def doubao_emotion(self) -> str:
+        """情感设置 (如 angry, happy)，仅部分音色支持"""
+        return _get("DOUBAO_EMOTION", "")
+
+    @property
+    def doubao_emotion_scale(self) -> int:
+        """情绪值 1~5，默认4"""
+        try:
+            return int(_get("DOUBAO_EMOTION_SCALE", "4"))
+        except ValueError:
+            return 4
 
     # ============================================================
     # Edge TTS 配置（微软免费 TTS）
@@ -226,6 +284,16 @@ if __name__ == "__main__":
     print("-" * 80)
 
     config_items = [
+        # Doubao
+        ("DOUBAO_APP_ID", env.doubao_app_id[:8] + "***" if env.doubao_app_id else "(未设置)", "env/env.local"),
+        ("DOUBAO_ACCESS_KEY", env.doubao_access_key[:8] + "***" if env.doubao_access_key else "(未设置)", "env/env.local"),
+        ("DOUBAO_RESOURCE_ID", env.doubao_resource_id, "env.local"),
+        ("DOUBAO_SPEAKER", env.doubao_speaker, "env.local"),
+        ("DOUBAO_AUDIO_FORMAT", env.doubao_audio_format, "env.local"),
+        ("DOUBAO_SAMPLE_RATE", str(env.doubao_sample_rate), "env.local"),
+        ("DOUBAO_SPEECH_RATE", str(env.doubao_speech_rate), "env.local"),
+        ("DOUBAO_EMOTION", env.doubao_emotion or "(未设置)", "env.local"),
+        ("DOUBAO_EMOTION_SCALE", str(env.doubao_emotion_scale), "env.local"),
         # Minimax
         ("MINIMAX_API_KEY", env.minimax_api_key[:8] + "***" if env.minimax_api_key else "(未设置)", "env/env.local"),
         ("MINIMAX_MODEL", env.minimax_model, "env.local"),

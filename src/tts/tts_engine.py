@@ -68,6 +68,18 @@ class TTSEngine:
         return asyncio.run(TTSEngine.get_all_voices_async())
 
 
+# === 注册到引擎中心 ===
+from .registry import TTSEngineRegistry, EngineMeta
+
+TTSEngineRegistry.register(EngineMeta(
+    engine_id="edge-tts",
+    display_name="Edge-TTS (微软免费)",
+    engine_cls=TTSEngine,
+    voices=TTSEngine.CHINESE_VOICES,
+    default_voice="zh-CN-XiaoxiaoNeural",
+))
+
+
 if __name__ == "__main__":
     test_text = "你好，这是一个测试。"
     output_file = os.path.join(os.path.dirname(__file__), "test_output.mp3")

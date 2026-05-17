@@ -219,6 +219,16 @@ def process_mobi(mobi_path: str, output_dir: str) -> tuple[list[str], str]:
         raise e
 
 
+# === 注册到解析器中心 ===
+from parser.registry import ParserRegistry, ParserMeta
+
+ParserRegistry.register(ParserMeta(
+    ext=".mobi",
+    display_name="MOBI",
+    process_fn=process_mobi,
+))
+
+
 if __name__ == "__main__":
     import sys
     from src.config import BOOKS_DIR, CHAPTER_DIR

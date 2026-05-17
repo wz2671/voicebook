@@ -287,6 +287,19 @@ def create_chat_tts_converter(use_gpu: bool = True) -> Optional[ChatTTSConverter
     return converter
 
 
+# === 注册到引擎中心 ===
+from .registry import TTSEngineRegistry, EngineMeta
+
+TTSEngineRegistry.register(EngineMeta(
+    engine_id="chat-tts",
+    display_name="ChatTTS (离线)",
+    engine_cls=ChatTTSConverter,
+    voices=[{"voice_id": "default", "name": "ChatTTS默认语音", "gender": "Unknown", "description": "AI合成默认语音"}],
+    default_voice="default",
+    is_available=ChatTTSConverter.is_available,
+))
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 

@@ -1,7 +1,9 @@
 """
 Minimax TTS 语音合成引擎
 
-使用 Minimax API 将文字转换为语音。
+使用 Minimax 异步长文本 API 将文字转换为语音。
+支持 speech-2.8-hd 等最新高品质模型，单次最高 100 万字符。
+
 配置通过 src/env.py 管理，实际值在项目根目录的 .env.local 中设置。
 
 依赖安装:
@@ -12,6 +14,7 @@ API 文档参考: https://platform.minimax.io/docs
 
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Optional, List
 import logging
@@ -24,13 +27,25 @@ logger = logging.getLogger(__name__)
 
 
 class MinimaxTTS:
-    """Minimax TTS 引擎，通过 HTTP API 生成语音"""
+    """Minimax TTS 引擎，通过异步长文本 API 生成语音"""
 
-    # Minimax API 端点
-    TTS_ENDPOINT = "https://api.minimax.chat/v1/t2a_v2"
+    # Minimax 异步长文本 API v2
+    TTS_SUBMIT_ENDPOINT = "https://api.minimax.chat/v1/t2a_async_v2"
+    TTS_QUERY_ENDPOINT = "https://api.minimax.chat/v1/query/t2a_async_query_v2"
+    TTS_FILE_ENDPOINT = "https://api.minimax.chat/v1/files/retrieve_content"
 
-    # 可用模型
-    MODELS = ["speech-01", "speech-02"]
+    # 可用模型（推荐 speech-2.8-hd）
+    MODELS = [
+        "speech-2.8-hd",   # 新一代高品质，情绪渲染强，融合语气词
+        "speech-02-hd",    # 经典高品质，韵律出色
+        "speech-2.6-hd",   # 均衡型
+        "speech-01",       # 基础模型
+        "speech-02",       # 基础模型
+    ]
+
+    # 异步轮询配置
+    POLL_INTERVAL = 2       # 轮询间隔（秒）
+    POLL_TIMEOUT = 600      # 轮询超时（秒）
 
     # 预设中文音色
     CHINESE_VOICES = [
@@ -85,10 +100,10 @@ class MinimaxTTS:
         self.audio_format = audio_format or _env_config.minimax_audio_format
 
     def _build_request_body(self, text: str) -> dict:
+        """构建异步 API v2 请求体"""
         return {
             "model": self.model,
             "text": text,
-            "stream": False,
             "voice_setting": {
                 "voice_id": self.voice_id,
                 "speed": self.speed,
@@ -96,19 +111,112 @@ class MinimaxTTS:
                 "pitch": self.pitch,
             },
             "audio_setting": {
-                "sample_rate": self.sample_rate,
+                "audio_sample_rate": self.sample_rate,
                 "bitrate": self.bitrate,
                 "format": self.audio_format,
+                "channel": 1,
             },
         }
 
-    def _decode_audio(self, hex_audio: str) -> bytes:
-        """将 Minimax 返回的十六进制音频数据解码为字节"""
-        return bytes.fromhex(hex_audio)
+    def _submit_task(self, text: str) -> Optional[int]:
+        """提交异步语音合成任务，返回 task_id (int)"""
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        body = self._build_request_body(text)
+
+        logger.info(f"提交异步任务 (model={self.model}, voice={self.voice_id}, text_len={len(text)})")
+
+        resp = requests.post(
+            self.TTS_SUBMIT_ENDPOINT,
+            headers=headers,
+            json=body,
+            timeout=30,
+        )
+
+        if resp.status_code != 200:
+            logger.error(f"提交失败 (HTTP {resp.status_code}): {resp.text}")
+            return None
+
+        result = resp.json()
+        base_resp = result.get("base_resp", {})
+        if base_resp.get("status_code") != 0:
+            logger.error(f"提交错误: {base_resp.get('status_msg', 'unknown error')}")
+            return None
+
+        task_id = result.get("task_id")
+        if not task_id:
+            logger.error("未获取到 task_id")
+            return None
+
+        logger.info(f"任务已提交，task_id: {task_id}")
+        return task_id
+
+    def _poll_task(self, task_id: int) -> Optional[int]:
+        """轮询异步任务直到完成，返回 file_id"""
+        url = f"{self.TTS_QUERY_ENDPOINT}?task_id={task_id}"
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+
+        start_time = time.time()
+
+        while True:
+            elapsed = time.time() - start_time
+            if elapsed > self.POLL_TIMEOUT:
+                logger.error(f"任务轮询超时 ({self.POLL_TIMEOUT}s)")
+                return None
+
+            time.sleep(self.POLL_INTERVAL)
+
+            resp = requests.get(url, headers=headers, timeout=30)
+
+            if resp.status_code != 200:
+                logger.warning(f"查询返回 HTTP {resp.status_code}, 继续等待...")
+                continue
+
+            result = resp.json()
+
+            base_resp = result.get("base_resp", {})
+            if base_resp.get("status_code") != 0:
+                logger.error(f"查询错误: {base_resp.get('status_msg', 'unknown error')}")
+                return None
+
+            status = result.get("status", "")
+
+            if status == "Success":
+                file_id = result.get("file_id")
+                if file_id:
+                    elapsed_str = f"{elapsed:.1f}s"
+                    logger.info(f"任务完成，耗时 {elapsed_str}，file_id: {file_id}")
+                    return file_id
+                logger.error("任务成功但未返回 file_id")
+                return None
+
+            elif status == "Failed":
+                logger.error("任务处理失败")
+                return None
+
+            else:
+                logger.debug(f"任务状态: {status}, 已等待 {elapsed:.0f}s")
+
+    def _download_audio(self, file_id: int) -> Optional[bytes]:
+        """通过 file_id 下载音频文件，返回原始字节"""
+        url = f"{self.TTS_FILE_ENDPOINT}?file_id={file_id}"
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+
+        logger.info(f"下载音频文件 file_id={file_id}...")
+        resp = requests.get(url, headers=headers, timeout=60)
+
+        if resp.status_code != 200:
+            logger.error(f"下载失败 (HTTP {resp.status_code}): {resp.text[:500]}")
+            return None
+
+        logger.info(f"音频下载成功 ({len(resp.content) / 1024:.1f} KB)")
+        return resp.content
 
     def text_to_speech(self, text: str, output_path: str) -> bool:
         """
-        将文本转换为语音并保存到文件。
+        将文本转换为语音并保存到文件（使用异步长文本 API v2）。
 
         Args:
             text: 要转换的文本
@@ -122,48 +230,23 @@ class MinimaxTTS:
             return False
 
         try:
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            }
-
-            body = self._build_request_body(text)
-
-            logger.info(f"正在调用 Minimax API (model={self.model}, voice={self.voice_id})...")
-            logger.debug(f"文本长度: {len(text)} 字符")
-
-            resp = requests.post(
-                self.TTS_ENDPOINT,
-                headers=headers,
-                json=body,
-                timeout=60,
-            )
-
-            if resp.status_code != 200:
-                logger.error(f"API 请求失败 (HTTP {resp.status_code}): {resp.text}")
+            # 步骤 1: 提交异步任务
+            task_id = self._submit_task(text)
+            if not task_id:
                 return False
 
-            result = resp.json()
-
-            # 检查响应状态
-            base_resp = result.get("base_resp", {})
-            if base_resp.get("status_code") != 0:
-                logger.error(f"API 返回错误: {base_resp.get('status_msg', 'unknown error')}")
+            # 步骤 2: 轮询等待完成
+            logger.info(f"等待语音合成完成 (最多 {self.POLL_TIMEOUT}s)...")
+            file_id = self._poll_task(task_id)
+            if not file_id:
                 return False
 
-            # 获取音频数据
-            audio_data = result.get("data", {}).get("audio")
-            if not audio_data:
-                # speech-02 的响应格式稍有不同
-                audio_data = result.get("audio")
-
-            if not audio_data:
-                logger.error("API 响应中未找到音频数据")
+            # 步骤 3: 下载音频文件
+            audio_bytes = self._download_audio(file_id)
+            if not audio_bytes:
                 return False
 
-            # 解码并写入文件
-            audio_bytes = self._decode_audio(audio_data)
-
+            # 步骤 4: 写入本地文件
             output_dir = os.path.dirname(output_path)
             if output_dir:
                 os.makedirs(output_dir, exist_ok=True)
@@ -180,9 +263,6 @@ class MinimaxTTS:
             return False
         except requests.exceptions.ConnectionError:
             logger.error("API 连接失败，请检查网络")
-            return False
-        except ValueError as e:
-            logger.error(f"十六进制解码失败: {e}")
             return False
         except Exception as e:
             logger.error(f"转换失败: {e}")
@@ -230,6 +310,19 @@ def create_minimax_tts(
     except ValueError as e:
         logger.error(str(e))
         return None
+
+
+# === 注册到引擎中心 ===
+from .registry import TTSEngineRegistry, EngineMeta
+
+TTSEngineRegistry.register(EngineMeta(
+    engine_id="minimax",
+    display_name="Minimax TTS",
+    engine_cls=MinimaxTTS,
+    voices=MinimaxTTS.CHINESE_VOICES,
+    default_voice=_env_config.minimax_voice_id,
+    is_available=MinimaxTTS.is_available,
+))
 
 
 if __name__ == "__main__":
@@ -282,3 +375,4 @@ if __name__ == "__main__":
     else:
         print("\n测试失败!")
         sys.exit(1)
+

@@ -1,5 +1,5 @@
 """
-MOBI提取面板
+电子书提取面板 (支持MOBI/EPUB)
 """
 
 import tkinter as tk
@@ -9,6 +9,7 @@ import shutil
 from pathlib import Path
 
 from .widgets import FileSelector, DirectorySelector, ProgressBar, LogDisplay, StatusLabel
+from parser.registry import ParserRegistry
 
 
 class ExtractPanel(ttk.Frame):
@@ -22,10 +23,20 @@ class ExtractPanel(ttk.Frame):
         self._layout_widgets()
 
     def _create_widgets(self):
+        # 动态构建文件类型过滤
+        exts = ParserRegistry.get_supported_extensions()
+        ext_patterns = ["*" + e for e in exts]
+        all_patterns = [("电子书文件", " ".join(ext_patterns))]
+        for ext in exts:
+            meta = ParserRegistry.get_parser(ext)
+            if meta:
+                all_patterns.append((f"{meta.display_name}文件", f"*{ext}"))
+        all_patterns.append(("所有文件", "*.*"))
+
         self.file_selector = FileSelector(
             self,
-            label="MOBI文件:",
-            filetypes=[("MOBI文件", "*.mobi"), ("所有文件", "*.*")]
+            label="电子书文件:",
+            filetypes=all_patterns
         )
 
         self.output_selector = DirectorySelector(
@@ -60,7 +71,7 @@ class ExtractPanel(ttk.Frame):
     def _layout_widgets(self):
         padding = 10
 
-        ttk.Label(self, text="MOBI章节提取", font=('', 14, 'bold')).pack(pady=padding)
+        ttk.Label(self, text="电子书章节提取", font=('', 14, 'bold')).pack(pady=padding)
 
         self.file_selector.pack(fill=tk.X, padx=padding, pady=5)
         self.output_selector.pack(fill=tk.X, padx=padding, pady=5)
@@ -75,15 +86,22 @@ class ExtractPanel(ttk.Frame):
         self.status_label.pack(pady=5)
 
     def _start_extract(self):
-        mobi_path = self.file_selector.get()
+        ebook_path = self.file_selector.get()
         output_dir = self.output_selector.get()
 
-        if not mobi_path:
-            messagebox.showerror("错误", "请选择MOBI文件")
+        if not ebook_path:
+            messagebox.showerror("错误", "请选择电子书文件")
             return
 
-        if not Path(mobi_path).exists():
-            messagebox.showerror("错误", "MOBI文件不存在")
+        ebook_file = Path(ebook_path)
+        if not ebook_file.exists():
+            messagebox.showerror("错误", "电子书文件不存在")
+            return
+
+        ext = ebook_file.suffix.lower()
+        if not ParserRegistry.is_supported(ext):
+            supported = ", ".join(ParserRegistry.get_supported_extensions())
+            messagebox.showerror("错误", f"不支持的文件格式 ({ext})，仅支持: {supported}")
             return
 
         if not output_dir:
@@ -96,35 +114,34 @@ class ExtractPanel(ttk.Frame):
         self.cancel_btn.config(state=tk.NORMAL)
         self.status_label.set_working("正在提取...")
         self.log_display.clear()
-        self.log_display.info(f"开始提取: {mobi_path}")
+        self.log_display.info(f"开始提取: {ebook_path}")
 
         thread = threading.Thread(
             target=self._extract_thread,
-            args=(mobi_path, output_dir),
+            args=(ebook_path, output_dir),
             daemon=True
         )
         thread.start()
 
-    def _extract_thread(self, mobi_path: str, output_dir: str):
+    def _extract_thread(self, ebook_path: str, output_dir: str):
         try:
             import sys
             libs_path = Path(__file__).parent.parent / "libs"
             if str(libs_path) not in sys.path:
                 sys.path.insert(0, str(libs_path))
 
-            from mobi_handler.mobi_extractor import process_mobi
-
-            self.log_display.info("正在解析MOBI文件...")
+            self.log_display.info("正在解析电子书文件...")
             self.progress.set(10)
 
             if self.cancel_flag:
                 self._on_cancelled()
                 return
 
-            saved_files, tempdir = process_mobi(mobi_path, output_dir)
+            saved_files, tempdir = ParserRegistry.parse(ebook_path, output_dir)
 
             if self.cancel_flag:
-                shutil.rmtree(tempdir, ignore_errors=True)
+                if tempdir:
+                    shutil.rmtree(tempdir, ignore_errors=True)
                 self._on_cancelled()
                 return
 
@@ -133,7 +150,8 @@ class ExtractPanel(ttk.Frame):
 
             for i, file_path in enumerate(saved_files):
                 if self.cancel_flag:
-                    shutil.rmtree(tempdir, ignore_errors=True)
+                    if tempdir:
+                        shutil.rmtree(tempdir, ignore_errors=True)
                     self._on_cancelled()
                     return
 
@@ -141,7 +159,8 @@ class ExtractPanel(ttk.Frame):
                 self.progress.set(progress)
                 self.log_display.info(f"保存: {Path(file_path).name}")
 
-            shutil.rmtree(tempdir, ignore_errors=True)
+            if tempdir:
+                shutil.rmtree(tempdir, ignore_errors=True)
 
             self.progress.set(100)
             self.log_display.success(f"提取完成！共保存 {total} 个章节文件")

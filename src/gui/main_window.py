@@ -35,7 +35,7 @@ class VoiceBookApp:
         self.extract_frame = ttk.Frame(self.notebook)
         self.convert_frame = ttk.Frame(self.notebook)
 
-        self.notebook.add(self.extract_frame, text="  MOBI提取  ")
+        self.notebook.add(self.extract_frame, text="  章节提取  ")
         self.notebook.add(self.convert_frame, text="  音频转换  ")
 
         self.extract_panel = ExtractPanel(self.extract_frame)

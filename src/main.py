@@ -14,10 +14,10 @@ if _libs_path not in sys.path:
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import AUDIO_FORMAT, AUDIOS_DIR, BOOKS_DIR, CHAPTER_DIR, PROJECT_ROOT, ensure_dirs
+from config import AUDIOS_DIR, BOOKS_DIR, CHAPTER_DIR, PROJECT_ROOT, ensure_dirs
 from env import env as _env
-from mobi_handler.mobi_extractor import process_mobi
-from tts.tts_engine import TTSEngine
+from parser.registry import ParserRegistry
+from tts.registry import TTSEngineRegistry
 
 
 def setup_logging(log_dir: Optional[str] = None) -> logging.Logger:
@@ -98,27 +98,32 @@ class ProgressBar:
             return f"{hours}h {minutes}m"
 
 
-def extract_command(mobi_path: str, output_dir: str, logger: logging.Logger) -> int:
-    logger.info(f"开始提取MOBI文件: {mobi_path}")
+def extract_command(ebook_path: str, output_dir: str, logger: logging.Logger) -> int:
+    logger.info(f"开始提取电子书: {ebook_path}")
 
-    mobi_file = Path(mobi_path)
-    if not mobi_file.exists():
-        logger.error(f"MOBI文件不存在: {mobi_path}")
-        print(f"错误: MOBI文件不存在: {mobi_path}")
+    ebook_file = Path(ebook_path)
+    if not ebook_file.exists():
+        logger.error(f"电子书文件不存在: {ebook_path}")
+        print(f"错误: 电子书文件不存在: {ebook_path}")
         return 1
 
-    if not mobi_file.suffix.lower() == '.mobi':
-        logger.error(f"文件不是MOBI格式: {mobi_path}")
-        print(f"错误: 文件不是MOBI格式: {mobi_path}")
+    ext = ebook_file.suffix.lower()
+    if not ParserRegistry.is_supported(ext):
+        supported = ", ".join(ParserRegistry.get_supported_extensions())
+        logger.error(f"不支持的文件格式: {ext}")
+        print(f"错误: 不支持的文件格式 ({ext})，仅支持: {supported}")
         return 1
+
+    parser_meta = ParserRegistry.get_parser(ext)
+    logger.info(f"文件类型: {parser_meta.display_name}")
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
     tempdir = None
     try:
-        print(f"\n正在提取: {mobi_file.name}")
-        saved_files, tempdir = process_mobi(str(mobi_file), str(output_path))
+        print(f"\n正在提取: {ebook_file.name}")
+        saved_files, tempdir = ParserRegistry.parse(str(ebook_file), str(output_path))
 
         if not saved_files:
             logger.warning("没有提取到任何章节")
@@ -127,7 +132,7 @@ def extract_command(mobi_path: str, output_dir: str, logger: logging.Logger) -> 
 
         logger.info(f"成功提取 {len(saved_files)} 个章节")
         print(f"\n成功提取 {len(saved_files)} 个章节")
-        print(f"输出目录: {output_path / mobi_file.stem}")
+        print(f"输出目录: {output_path / ebook_file.stem}")
 
         print("\n章节列表:")
         for i, file in enumerate(saved_files[:10], 1):
@@ -172,54 +177,40 @@ def convert_command(chapter_dir: str, output_dir: str, voice: str, engine: str, 
     output_path = Path(output_dir) / book_name
     output_path.mkdir(parents=True, exist_ok=True)
 
-    if engine == 'edge-tts':
-        voice_name = voice or _env.edge_tts_default_voice
-        try:
-            tts = TTSEngine(voice=voice_name)
-            logger.info(f"TTS引擎初始化成功，语音: {voice_name}")
-        except ValueError as e:
-            logger.error(f"无效的语音选择: {voice_name}")
-            print(f"错误: {e}")
-            print("\n可用的中文语音:")
-            for v in TTSEngine.get_available_voices("zh"):
-                print(f"  - {v['name']}: {v['description']}")
-            return 1
-    elif engine == 'chat-tts':
-        from tts.chat_tts_converter import ChatTTSConverter
-        if not ChatTTSConverter.is_available():
-            logger.error("ChatTTS不可用，请安装依赖: pip install torch torchaudio")
-            print("错误: ChatTTS不可用，请安装依赖: pip install torch torchaudio")
-            return 1
-        tts = ChatTTSConverter(use_gpu=_env.chat_tts_use_gpu)
-        logger.info("ChatTTS引擎初始化成功")
-    elif engine == 'minimax':
-        from tts.minimax_tts import MinimaxTTS
-        if not MinimaxTTS.is_available():
-            logger.error("Minimax TTS不可用，请安装依赖: pip install requests")
-            print("错误: Minimax TTS不可用，请安装依赖: pip install requests")
-            return 1
-        try:
-            voice_id = voice or _env.minimax_voice_id
-            tts = MinimaxTTS(voice_id=voice_id)
-            logger.info(f"Minimax TTS引擎初始化成功，音色: {tts.voice_id}")
-        except ValueError as e:
-            logger.error(f"Minimax TTS初始化失败: {e}")
-            print(f"错误: {e}")
-            return 1
+    # 通过注册中心创建引擎实例
+    engine_meta = TTSEngineRegistry.get_engine(engine)
+    if not engine_meta:
+        available = list(TTSEngineRegistry.list_engines().keys())
+        logger.error(f"未找到TTS引擎: {engine}")
+        print(f"错误: 未找到TTS引擎 ({engine})，可用: {available}")
+        return 1
 
-    if engine == 'edge-tts':
-        display_voice = voice or _env.edge_tts_default_voice
-    elif engine == 'minimax':
-        display_voice = voice or _env.minimax_voice_id
-    else:
-        display_voice = voice or ""
+    if engine_meta.is_available and not engine_meta.is_available():
+        logger.error(f"TTS引擎 {engine} 不可用，请检查依赖安装")
+        print(f"错误: TTS引擎 {engine} 不可用，请检查依赖安装")
+        return 1
+
+    try:
+        tts = TTSEngineRegistry.create_engine(engine, voice=voice)
+        logger.info(f"TTS引擎初始化成功: {engine_meta.display_name}")
+    except ValueError as e:
+        logger.error(f"TTS引擎初始化失败: {e}")
+        print(f"错误: {e}")
+
+        # 显示该引擎的可选语音
+        voices = TTSEngineRegistry.get_voices(engine)
+        if voices:
+            print(f"\n可用的语音/音色:")
+            for v in voices:
+                desc = v.get("description", "")
+                print(f"  - {v.get('voice_id', v.get('name', ''))}: {desc}")
+        return 1
+
+    display_voice = voice or engine_meta.default_voice
 
     print(f"\n开始转换 {len(chapter_files)} 个章节")
-    print(f"使用引擎: {engine}")
-    if engine == 'edge-tts':
-        print(f"使用语音: {display_voice}")
-    elif engine == 'minimax':
-        print(f"使用音色ID: {display_voice}")
+    print(f"使用引擎: {engine_meta.display_name}")
+    print(f"使用语音: {display_voice}")
     print(f"输出目录: {output_path}")
     print()
 
@@ -227,9 +218,14 @@ def convert_command(chapter_dir: str, output_dir: str, voice: str, engine: str, 
     success_count = 0
     failed_count = 0
 
+    # Edge-TTS 使用 text_to_speech_sync，其他引擎使用 text_to_speech
+    use_sync = (engine == 'edge-tts')
+
     for chapter_file in chapter_files:
         chapter_name = chapter_file.stem
-        audio_file = output_path / f"{chapter_name}.{AUDIO_FORMAT}"
+        # 使用 env.py 的音频格式
+        audio_ext = _env.audio_format
+        audio_file = output_path / f"{chapter_name}.{audio_ext}"
 
         try:
             with open(chapter_file, 'r', encoding='utf-8') as f:
@@ -247,9 +243,9 @@ def convert_command(chapter_dir: str, output_dir: str, voice: str, engine: str, 
 
             logger.debug(f"转换章节: {title}")
 
-            if engine == 'edge-tts':
+            if use_sync:
                 success = tts.text_to_speech_sync(text_content, str(audio_file))
-            elif engine == 'chat-tts' or engine == 'minimax':
+            else:
                 success = tts.text_to_speech(text_content, str(audio_file))
 
             if success:
@@ -273,25 +269,32 @@ def convert_command(chapter_dir: str, output_dir: str, voice: str, engine: str, 
     return 0 if failed_count == 0 else 1
 
 
-def process_command(mobi_path: str, output_dir: str, voice: str, engine: str, logger: logging.Logger) -> int:
-    logger.info(f"开始完整流程: {mobi_path}")
+def process_command(ebook_path: str, output_dir: str, voice: str, engine: str, logger: logging.Logger) -> int:
+    logger.info(f"开始完整流程: {ebook_path}")
 
-    mobi_file = Path(mobi_path)
-    if not mobi_file.exists():
-        logger.error(f"MOBI文件不存在: {mobi_path}")
-        print(f"错误: MOBI文件不存在: {mobi_path}")
+    ebook_file = Path(ebook_path)
+    if not ebook_file.exists():
+        logger.error(f"电子书文件不存在: {ebook_path}")
+        print(f"错误: 电子书文件不存在: {ebook_path}")
         return 1
 
-    book_name = mobi_file.stem
+    ext = ebook_file.suffix.lower()
+    if not ParserRegistry.is_supported(ext):
+        supported = ", ".join(ParserRegistry.get_supported_extensions())
+        logger.error(f"不支持的文件格式: {ext}")
+        print(f"错误: 不支持的文件格式 ({ext})，仅支持: {supported}")
+        return 1
+
+    book_name = ebook_file.stem
     chapter_output = Path(output_dir) / "chapter" / book_name
     audio_output = Path(output_dir) / "audios"
 
     print(f"\n{'='*60}")
-    print(f"开始处理: {mobi_file.name}")
+    print(f"开始处理: {ebook_file.name}")
     print(f"{'='*60}")
 
     print("\n[步骤 1/2] 提取章节...")
-    extract_result = extract_command(mobi_path, str(Path(output_dir) / "chapter"), logger)
+    extract_result = extract_command(str(ebook_file), str(Path(output_dir) / "chapter"), logger)
 
     if extract_result != 0:
         logger.error("提取步骤失败，终止流程")
@@ -314,38 +317,57 @@ def process_command(mobi_path: str, output_dir: str, voice: str, engine: str, lo
 
 
 def list_voices_command():
-    print("可用的中文语音:\n")
-    voices = TTSEngine.get_available_voices("zh")
-    for v in voices:
-        print(f"  {v['name']}")
-        print(f"    描述: {v['description']}")
-        print(f"    性别: {v['gender']}")
-        print()
+    """列出所有已注册 TTS 引擎的语音"""
+    engines = TTSEngineRegistry.list_engines()
+    if not engines:
+        print("没有找到可用的TTS引擎")
+        return
+
+    for engine_id, display_name in engines.items():
+        print(f"\n{'=' * 60}")
+        print(f"[{display_name}] (engine: {engine_id})")
+        print(f"{'=' * 60}")
+
+        voices = TTSEngineRegistry.get_voices(engine_id)
+        if not voices:
+            print("  (无预设语音列表，请参考引擎文档)")
+            continue
+
+        for v in voices:
+            voice_id = v.get("voice_id", v.get("name", ""))
+            desc = v.get("description", "")
+            gender = v.get("gender", "")
+            print(f"  {voice_id}")
+            print(f"    描述: {desc}")
+            if gender:
+                print(f"    性别: {gender}")
+            print()
 
 
 def main():
     parser = argparse.ArgumentParser(
         prog='voicebook',
-        description='VoiceBook - MOBI电子书转音频工具',
+        description='VoiceBook - 电子书转音频工具 (支持MOBI/EPUB)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
   %(prog)s extract books/mybook.mobi                    # 提取章节到默认目录
-  %(prog)s extract books/mybook.mobi -o ./output        # 提取章节到指定目录
+  %(prog)s extract books/mybook.epub                    # 提取EPUB章节
+  %(prog)s extract books/mybook.epub -o ./output        # 提取章节到指定目录
   %(prog)s convert chapter/mybook                       # 转换章节为音频 (默认edge-tts)
   %(prog)s convert chapter/mybook -v zh-CN-YunxiNeural  # 使用指定语音
   %(prog)s convert chapter/mybook --engine chat-tts     # 使用ChatTTS引擎
-  %(prog)s process books/mybook.mobi                    # 完整流程
-  %(prog)s process books/mybook.mobi --engine chat-tts  # 完整流程使用ChatTTS
-  %(prog)s process books/mybook.mobi --engine minimax   # 完整流程使用Minimax
+  %(prog)s process books/mybook.mobi                    # 完整流程 (MOBI)
+  %(prog)s process books/mybook.epub                    # 完整流程 (EPUB)
+  %(prog)s process books/mybook.epub --engine minimax   # 完整流程使用Minimax
   %(prog)s voices                                       # 列出可用语音
 """
     )
 
     subparsers = parser.add_subparsers(dest='command', help='可用命令')
 
-    extract_parser = subparsers.add_parser('extract', help='从MOBI文件提取章节')
-    extract_parser.add_argument('mobi_file', help='MOBI文件路径')
+    extract_parser = subparsers.add_parser('extract', help='从MOBI/EPUB文件提取章节')
+    extract_parser.add_argument('ebook_file', help='MOBI/EPUB文件路径')
     extract_parser.add_argument('-o', '--output', default=str(CHAPTER_DIR),
                                 help=f'输出目录 (默认: {CHAPTER_DIR})')
 
@@ -355,16 +377,17 @@ def main():
                                 help=f'输出目录 (默认: {AUDIOS_DIR})')
     convert_parser.add_argument('-v', '--voice', default=None,
                                 help=f'TTS语音/音色ID (默认: edge-tts={_env.edge_tts_default_voice}, minimax={_env.minimax_voice_id})')
-    convert_parser.add_argument('--engine', choices=['edge-tts', 'chat-tts', 'minimax'], default='edge-tts',
+    engine_choices = list(TTSEngineRegistry.list_engines().keys()) or ['edge-tts']
+    convert_parser.add_argument('--engine', choices=engine_choices, default='edge-tts',
                                 help='TTS引擎 (默认: edge-tts)')
 
     process_parser = subparsers.add_parser('process', help='完整流程：提取+转换')
-    process_parser.add_argument('mobi_file', help='MOBI文件路径')
+    process_parser.add_argument('ebook_file', help='MOBI/EPUB文件路径')
     process_parser.add_argument('-o', '--output', default=str(PROJECT_ROOT),
                                 help=f'输出根目录 (默认: {PROJECT_ROOT})')
     process_parser.add_argument('-v', '--voice', default=None,
                                 help=f'TTS语音/音色ID (edge-tts默认: {_env.edge_tts_default_voice}, minimax默认: {_env.minimax_voice_id})')
-    process_parser.add_argument('--engine', choices=['edge-tts', 'chat-tts', 'minimax'], default='edge-tts',
+    process_parser.add_argument('--engine', choices=engine_choices, default='edge-tts',
                                 help='TTS引擎 (默认: edge-tts)')
 
     voices_parser = subparsers.add_parser('voices', help='列出可用的TTS语音')
@@ -388,13 +411,13 @@ def main():
                 handler.setLevel(logging.DEBUG)
 
     if args.command == 'extract':
-        return extract_command(args.mobi_file, args.output, logger)
+        return extract_command(args.ebook_file, args.output, logger)
 
     elif args.command == 'convert':
         return convert_command(args.chapter_dir, args.output, args.voice, args.engine, logger)
 
     elif args.command == 'process':
-        return process_command(args.mobi_file, args.output, args.voice, args.engine, logger)
+        return process_command(args.ebook_file, args.output, args.voice, args.engine, logger)
 
     elif args.command == 'voices':
         list_voices_command()

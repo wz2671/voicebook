@@ -9,21 +9,10 @@ from pathlib import Path
 from typing import Optional
 
 from .widgets import DirectorySelector, ProgressBar, LogDisplay, StatusLabel
+from tts.registry import TTSEngineRegistry
 
 
 class ConvertPanel(ttk.Frame):
-    TTS_ENGINES = {
-        "Edge-TTS (推荐)": "edge-tts",
-        "ChatTTS (离线)": "chat-tts"
-    }
-
-    EDGE_TTS_VOICES = [
-        ("zh-CN-XiaoxiaoNeural", "女声，自然流畅"),
-        ("zh-CN-YunyangNeural", "男声，新闻播报风格"),
-        ("zh-CN-YunxiNeural", "男声，年轻活泼"),
-        ("zh-CN-XiaoyiNeural", "女声，温柔甜美"),
-    ]
-
     def __init__(self, parent, **kwargs):
         super().__init__(parent, **kwargs)
 
@@ -33,6 +22,23 @@ class ConvertPanel(ttk.Frame):
 
         self._create_widgets()
         self._layout_widgets()
+        self._load_engines()
+
+    def _load_engines(self):
+        """从注册中心加载引擎列表和语音列表"""
+        engine_map = TTSEngineRegistry.list_engines()
+        if not engine_map:
+            return
+
+        self._engines = engine_map  # {id: display_name}
+        self._engine_display_names = list(engine_map.values())
+        self._engine_ids = list(engine_map.keys())
+
+        # 设置引擎下拉框
+        self.engine_combo['values'] = self._engine_display_names
+        if self._engine_display_names:
+            self.engine_combo.current(0)
+            self._on_engine_change()
 
     def _create_widgets(self):
         self.chapter_selector = DirectorySelector(
@@ -54,11 +60,10 @@ class ConvertPanel(ttk.Frame):
         self.engine_frame = ttk.LabelFrame(self, text="TTS设置")
 
         ttk.Label(self.engine_frame, text="TTS引擎:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
-        self.engine_var = tk.StringVar(value="Edge-TTS (推荐)")
+        self.engine_var = tk.StringVar()
         self.engine_combo = ttk.Combobox(
             self.engine_frame,
             textvariable=self.engine_var,
-            values=list(self.TTS_ENGINES.keys()),
             state="readonly",
             width=30
         )
@@ -66,16 +71,14 @@ class ConvertPanel(ttk.Frame):
         self.engine_combo.bind("<<ComboboxSelected>>", self._on_engine_change)
 
         ttk.Label(self.engine_frame, text="语音选择:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
-        self.voice_var = tk.StringVar(value="zh-CN-XiaoxiaoNeural")
+        self.voice_var = tk.StringVar()
         self.voice_combo = ttk.Combobox(
             self.engine_frame,
             textvariable=self.voice_var,
-            values=[f"{v[0]} - {v[1]}" for v in self.EDGE_TTS_VOICES],
             state="readonly",
             width=30
         )
         self.voice_combo.grid(row=1, column=1, padx=5, pady=5, sticky=tk.W)
-        self.voice_combo.current(0)
 
         self.progress = ProgressBar(self)
 
@@ -117,14 +120,32 @@ class ConvertPanel(ttk.Frame):
         self.btn_frame.pack(pady=5)
         self.status_label.pack(pady=5)
 
-    def _on_engine_change(self, event=None):
-        engine = self.TTS_ENGINES.get(self.engine_var.get())
+    def _get_current_engine_id(self) -> Optional[str]:
+        """获取当前选中的引擎 ID"""
+        display_name = self.engine_var.get()
+        if not display_name or not hasattr(self, '_engines'):
+            return None
+        for eid, name in self._engines.items():
+            if name == display_name:
+                return eid
+        return None
 
-        if engine == "edge-tts":
-            self.voice_combo['values'] = [f"{v[0]} - {v[1]}" for v in self.EDGE_TTS_VOICES]
+    def _on_engine_change(self, event=None):
+        """引擎切换时更新语音列表"""
+        engine_id = self._get_current_engine_id()
+        if not engine_id:
+            return
+
+        voices = TTSEngineRegistry.get_voices(engine_id)
+        if voices:
+            voice_labels = [
+                f"{v.get('voice_id', v.get('name', ''))} - {v.get('description', '')}"
+                for v in voices
+            ]
+            self.voice_combo['values'] = voice_labels
             self.voice_combo.current(0)
-        elif engine == "chat-tts":
-            self.voice_combo['values'] = ["ChatTTS默认语音"]
+        else:
+            self.voice_combo['values'] = ["(无预设语音)"]
             self.voice_combo.current(0)
 
     def _start_convert(self):
@@ -143,6 +164,11 @@ class ConvertPanel(ttk.Frame):
             messagebox.showerror("错误", "请选择输出目录")
             return
 
+        engine_id = self._get_current_engine_id()
+        if not engine_id:
+            messagebox.showerror("错误", "未选择TTS引擎")
+            return
+
         self.is_running = True
         self.cancel_flag = False
         self.start_btn.config(state=tk.DISABLED)
@@ -150,22 +176,22 @@ class ConvertPanel(ttk.Frame):
         self.status_label.set_working("正在转换...")
         self.log_display.clear()
 
-        engine = self.TTS_ENGINES.get(self.engine_var.get())
-        voice = self.voice_var.get().split(" - ")[0] if " - " in self.voice_var.get() else "default"
+        voice_raw = self.voice_var.get()
+        voice = voice_raw.split(" - ")[0] if " - " in voice_raw else "default"
 
-        self.log_display.info(f"TTS引擎: {engine}")
+        self.log_display.info(f"TTS引擎: {engine_id}")
         self.log_display.info(f"语音: {voice}")
         self.log_display.info(f"章节目录: {chapter_dir}")
         self.log_display.info(f"输出目录: {output_dir}")
 
         thread = threading.Thread(
             target=self._convert_thread,
-            args=(chapter_dir, output_dir, engine, voice),
+            args=(chapter_dir, output_dir, engine_id, voice),
             daemon=True
         )
         thread.start()
 
-    def _convert_thread(self, chapter_dir: str, output_dir: str, engine: str, voice: str):
+    def _convert_thread(self, chapter_dir: str, output_dir: str, engine_id: str, voice: str):
         try:
             import sys
             libs_path = Path(__file__).parent.parent / "libs"
@@ -186,103 +212,63 @@ class ConvertPanel(ttk.Frame):
             total = len(md_files)
             self.log_display.info(f"找到 {total} 个章节文件")
 
-            if engine == "edge-tts":
-                self._convert_with_edge_tts(md_files, output_dir, book_name, voice)
-            elif engine == "chat-tts":
-                self._convert_with_chat_tts(md_files, output_dir, book_name)
+            # 通过注册中心创建引擎
+            try:
+                tts = TTSEngineRegistry.create_engine(engine_id, voice=voice)
+            except ValueError as e:
+                self.log_display.error(f"引擎创建失败: {e}")
+                self.status_label.set(f"错误: {e}")
+                self._on_finished()
+                return
+
+            success_count = 0
+
+            for i, md_file in enumerate(md_files):
+                if self.cancel_flag:
+                    self._on_cancelled()
+                    return
+
+                progress = (i + 1) / total * 100
+                self.progress.set(progress)
+                self.log_display.info(f"转换 {i+1}/{total}: {md_file.name}")
+
+                # 读取章节内容
+                with open(md_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+
+                lines = content.split('\n')
+                text_content = '\n'.join(lines[1:]).strip() if lines and lines[0].startswith('# ') else content.strip()
+
+                if not text_content:
+                    self.log_display.warning(f"章节内容为空: {md_file.name}")
+                    continue
+
+                # 确定输出扩展名
+                from env import env as _env
+                audio_ext = _env.audio_format
+                audio_path = Path(output_dir) / book_name / md_file.name.replace('.md', f'.{audio_ext}')
+
+                try:
+                    # Edge-TTS 使用同步方法
+                    if engine_id == 'edge-tts':
+                        success = tts.text_to_speech_sync(text_content, str(audio_path))
+                    else:
+                        success = tts.text_to_speech(text_content, str(audio_path))
+
+                    if success:
+                        success_count += 1
+                        self.log_display.success(f"成功: {audio_path.name}")
+                    else:
+                        self.log_display.warning(f"失败: {md_file.name}")
+                except Exception as e:
+                    self.log_display.error(f"错误: {md_file.name} - {str(e)}")
+
+            self.log_display.success(f"转换完成！成功: {success_count}/{total}")
+            self.status_label.set_done(f"完成 ({success_count}/{total})")
+            self._on_finished()
 
         except Exception as e:
             self.log_display.error(f"转换失败: {str(e)}")
-            self.status_label.set(f"错误: {str(e)}")
-            self._on_finished()
-
-    def _convert_with_edge_tts(self, md_files, output_dir: str, book_name: str, voice: str):
-        try:
-            from tts.audio_converter import AudioConverter
-
-            converter = AudioConverter(voice=voice)
-            total = len(md_files)
-            success_count = 0
-
-            for i, md_file in enumerate(md_files):
-                if self.cancel_flag:
-                    self._on_cancelled()
-                    return
-
-                progress = (i + 1) / total * 100
-                self.progress.set(progress)
-                self.log_display.info(f"转换 {i+1}/{total}: {md_file.name}")
-
-                audio_path = Path(output_dir) / book_name / md_file.name.replace('.md', '.mp3')
-
-                try:
-                    if converter.convert_chapter(str(md_file), str(audio_path)):
-                        success_count += 1
-                        self.log_display.success(f"成功: {audio_path.name}")
-                    else:
-                        self.log_display.warning(f"失败: {md_file.name}")
-                except Exception as e:
-                    self.log_display.error(f"错误: {md_file.name} - {str(e)}")
-
-            self.log_display.success(f"转换完成！成功: {success_count}/{total}")
-            self.status_label.set_done(f"完成 ({success_count}/{total})")
-            self._on_finished()
-
-        except Exception as e:
-            self.log_display.error(f"Edge-TTS转换失败: {str(e)}")
-            self.status_label.set(f"错误: {str(e)}")
-            self._on_finished()
-
-    def _convert_with_chat_tts(self, md_files, output_dir: str, book_name: str):
-        try:
-            from tts.chat_tts_converter import ChatTTSConverter
-
-            if not ChatTTSConverter.is_available():
-                self.log_display.error("ChatTTS未安装，请运行: pip install ChatTTS torch torchaudio")
-                self.status_label.set("错误: ChatTTS未安装")
-                self._on_finished()
-                return
-
-            self.log_display.info("正在加载ChatTTS模型...")
-            converter = ChatTTSConverter(use_gpu=True)
-
-            if not converter.load_model():
-                self.log_display.error("ChatTTS模型加载失败")
-                self.status_label.set("错误: 模型加载失败")
-                self._on_finished()
-                return
-
-            self.log_display.success("ChatTTS模型加载成功")
-
-            total = len(md_files)
-            success_count = 0
-
-            for i, md_file in enumerate(md_files):
-                if self.cancel_flag:
-                    self._on_cancelled()
-                    return
-
-                progress = (i + 1) / total * 100
-                self.progress.set(progress)
-                self.log_display.info(f"转换 {i+1}/{total}: {md_file.name}")
-
-                audio_path = Path(output_dir) / book_name / md_file.name.replace('.md', '.wav')
-
-                try:
-                    if converter.convert_chapter(str(md_file), str(audio_path)):
-                        success_count += 1
-                        self.log_display.success(f"成功: {audio_path.name}")
-                    else:
-                        self.log_display.warning(f"失败: {md_file.name}")
-                except Exception as e:
-                    self.log_display.error(f"错误: {md_file.name} - {str(e)}")
-
-            self.log_display.success(f"转换完成！成功: {success_count}/{total}")
-            self.status_label.set_done(f"完成 ({success_count}/{total})")
-            self._on_finished()
-
-        except Exception as e:
-            self.log_display.error(f"ChatTTS转换失败: {str(e)}")
             self.status_label.set(f"错误: {str(e)}")
             self._on_finished()
 
