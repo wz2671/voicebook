@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+eggs/
+*.egg
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.trae/
+
+# Local configuration (contains secrets)
+.env.local
+
+# Generated directories
+logs/
+audios/
+books/
+chapter/
+doc/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test outputs
+test_*.mp3
+test_*.wav
+test_*.mp4
