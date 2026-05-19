@@ -98,6 +98,8 @@ class DoubaoTTS:
         audio_format: Optional[str] = None,
         sample_rate: Optional[int] = None,
         speech_rate: Optional[int] = None,
+        volume_ratio: Optional[float] = None,
+        loudness_rate: Optional[int] = None,
         emotion: Optional[str] = None,
         emotion_scale: Optional[int] = None,
     ):
@@ -138,6 +140,8 @@ class DoubaoTTS:
         self.speech_rate = speech_rate if speech_rate is not None else _env_config.doubao_speech_rate
         self.emotion = emotion if emotion is not None else _env_config.doubao_emotion
         self.emotion_scale = emotion_scale if emotion_scale is not None else _env_config.doubao_emotion_scale
+        self.volume_ratio = volume_ratio if volume_ratio is not None else _env_config.doubao_volume_ratio
+        self.loudness_rate = loudness_rate if loudness_rate is not None else _env_config.doubao_loudness_rate
 
     def _build_headers(self) -> dict:
         return {
@@ -163,6 +167,12 @@ class DoubaoTTS:
             },
         }
 
+        # 固定音量参数，抑制音量波动
+        if self.volume_ratio is not None:
+            body["req_params"]["audio_params"]["volume_ratio"] = self.volume_ratio
+        if self.loudness_rate is not None:
+            body["req_params"]["audio_params"]["loudness_rate"] = self.loudness_rate
+
         if self.emotion:
             body["req_params"]["audio_params"]["emotion"] = self.emotion
             body["req_params"]["audio_params"]["emotion_scale"] = self.emotion_scale
@@ -175,7 +185,8 @@ class DoubaoTTS:
         body = self._build_submit_body(text)
 
         logger.info(f"提交豆包异步任务 (speaker={self.speaker}, format={self.audio_format}, "
-                      f"sample_rate={self.sample_rate}, text_len={len(text)})")
+                      f"sample_rate={self.sample_rate}, volume_ratio={self.volume_ratio}, "
+                      f"loudness_rate={self.loudness_rate}, text_len={len(text)})")
 
         try:
             resp = requests.post(self.SUBMIT_URL, headers=headers, json=body, timeout=30)

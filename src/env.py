@@ -202,6 +202,22 @@ class EnvConfig:
         except ValueError:
             return 4
 
+    @property
+    def doubao_volume_ratio(self) -> float:
+        """音量比率 (0.5 ~ 2.0)，默认 1.0。固定值避免音量波动"""
+        try:
+            return float(_get("DOUBAO_VOLUME_RATIO", "1.0"))
+        except ValueError:
+            return 1.0
+
+    @property
+    def doubao_loudness_rate(self) -> int:
+        """响度归一化: 0=标准(推荐), 1=增强, 2=关闭。设为0强制响度对齐，抑制句间跳变"""
+        try:
+            return int(_get("DOUBAO_LOUDNESS_RATE", "0"))
+        except ValueError:
+            return 0
+
     # ============================================================
     # Edge TTS 配置（微软免费 TTS）
     # ============================================================
