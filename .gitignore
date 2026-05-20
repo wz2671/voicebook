@@ -29,7 +29,6 @@ logs/
 audios/
 books/
 chapter/
-doc/
 
 # OS
 .DS_Store
