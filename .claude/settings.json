@@ -6,7 +6,8 @@
       "Bash(python -c \"from tts.registry import TTSEngineRegistry; engines = TTSEngineRegistry.list_engines\\(\\); print\\(''Engines:'', list\\(engines.keys\\(\\)\\)\\); print\\(''Voices for doubao:'', len\\(TTSEngineRegistry.get_voices\\(''doubao''\\)\\)\\)\")",
       "Bash(python -m src.main convert \"project\\\\游戏设计的100个原理\\\\原理6-10.md\" --engine doubao -v zh_female_vv_uranus_bigtts)",
       "Bash(python -c \":*)",
-      "Bash(python -c \"content = open\\(''d:/CODE/voicebook/project/游戏设计的100个原理/第四期/原理16-20-distill.md'', ''r'', encoding=''utf-8''\\).read\\(\\); chars = len\\(content\\); print\\(f''Total characters: {chars}''\\); print\\(f''Estimated duration: {chars/318:.1f} minutes''\\)\")"
+      "Bash(python -c \"content = open\\(''d:/CODE/voicebook/project/游戏设计的100个原理/第四期/原理16-20-distill.md'', ''r'', encoding=''utf-8''\\).read\\(\\); chars = len\\(content\\); print\\(f''Total characters: {chars}''\\); print\\(f''Estimated duration: {chars/318:.1f} minutes''\\)\")",
+      "Bash(python -m src.main voices)"
     ]
   }
 }
